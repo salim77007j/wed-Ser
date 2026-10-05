@@ -27,3 +27,6 @@ Thumbs.db
 # Local build configs and secrets — never commit
 .env
 *.local.toml
+
+# Local helper scripts (never commit)
+local-build.sh

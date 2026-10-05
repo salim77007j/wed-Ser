@@ -29,7 +29,7 @@ env:
 
 jobs:
   build-linux:
-    name: Servo Linux x86_64 (${{ env.SERVO_PROFILE }})
+    name: Servo Linux x86_64 (debug)
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
@@ -101,7 +101,7 @@ jobs:
           if [ -n "$SCCACHE_PATH" ]; then "$SCCACHE_PATH" --show-stats; else echo "sccache stats unavailable"; fi
 
   build-windows:
-    name: Servo Windows x86_64 (${{ env.SERVO_PROFILE }})
+    name: Servo Windows x86_64 (debug)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows }}
     runs-on: windows-2022
     timeout-minutes: 300
