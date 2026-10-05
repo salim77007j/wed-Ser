@@ -1,0 +1,154 @@
+name: Servo Baseline Build
+
+# Builds the pinned Servo engine (git submodule `servo/`) from source on
+# GitHub-hosted runners, then runs Servo's official headless smoketest.
+#
+# The dependency-install steps mirror what servo/servo's own CI does on
+# GitHub-hosted runners (see servo v0.6.0:
+#   .github/workflows/linux-common.yml and .github/workflows/windows.yml).
+#
+# The Windows job is opt-in via workflow_dispatch: it takes roughly 2x the
+# Linux build time, so pushes only exercise Linux by default.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: "Also build on Windows (adds ~1-2h)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: 1
+  SERVO_PROFILE: debug # fastest to compile; distributables come in Phase 5
+
+jobs:
+  build-linux:
+    name: Servo Linux x86_64 (${{ env.SERVO_PROFILE }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space (servo debug builds need ~20GB)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: false
+          swap-storage: false
+
+      - name: Install LLVM/Clang 20.1 (bindgen requirement, matches servo CI)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: Set LIBCLANG_PATH
+        run: echo "LIBCLANG_PATH=${LLVM_PATH}/lib" >> "$GITHUB_ENV"
+
+      - name: Setup Python and uv (versions pinned by servo)
+        uses: ./servo/.github/actions/setup-python
+        with:
+          python-version-file-path: servo/.python-version
+
+      - name: Install sccache (speeds up re-runs after failures)
+        uses: mozilla-actions/sccache-action@v0.0.11
+      - name: Configure sccache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+
+      - name: Bootstrap build dependencies
+        timeout-minutes: 30
+        working-directory: servo
+        run: |
+          sudo apt-get update
+          echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
+          sudo apt-get install -qy tshark shellcheck
+          ./mach bootstrap --yes --skip-lints --skip-nextest
+
+      - name: Build servo
+        working-directory: servo
+        run: ./mach build --locked --profile "$SERVO_PROFILE"
+
+      - name: Smoketest (official headless test, virtual display)
+        working-directory: servo
+        run: xvfb-run ./mach smoketest --profile "$SERVO_PROFILE"
+
+      - name: Package (proves mach packaging works)
+        working-directory: servo
+        run: ./mach package --profile "$SERVO_PROFILE"
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: servo-baseline-linux-x86_64
+          path: servo/target/${{ env.SERVO_PROFILE }}/servo-tech-demo.tar.gz
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Report sccache stats
+        if: always()
+        run: |
+          if [ -n "$SCCACHE_PATH" ]; then "$SCCACHE_PATH" --show-stats; else echo "sccache stats unavailable"; fi
+
+  build-windows:
+    name: Servo Windows x86_64 (${{ env.SERVO_PROFILE }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows }}
+    runs-on: windows-2022
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM/Clang 20.1 (bindgen requirement, matches servo CI)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: Set LIBCLANG_PATH
+        shell: pwsh
+        run: |
+          $llvm_bin = Join-Path $env:LLVM_PATH "bin"
+          "LIBCLANG_PATH=$llvm_bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup Python and uv (versions pinned by servo)
+        uses: ./servo/.github/actions/setup-python
+        with:
+          python-version-file-path: servo/.python-version
+
+      - name: Install sccache (speeds up re-runs after failures)
+        uses: mozilla-actions/sccache-action@v0.0.11
+      - name: Configure sccache
+        shell: pwsh
+        run: |
+          "SCCACHE_GHA_ENABLED=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_INCREMENTAL=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Fetch vendored sources and bootstrap
+        working-directory: servo
+        shell: pwsh
+        run: |
+          .\mach fetch
+          .\mach bootstrap-gstreamer
+
+      - name: Build servo
+        working-directory: servo
+        shell: pwsh
+        run: .\mach build --locked --profile $env:SERVO_PROFILE
+
+      - name: Smoketest (official headless test)
+        working-directory: servo
+        shell: pwsh
+        run: .\mach smoketest --profile $env:SERVO_PROFILE

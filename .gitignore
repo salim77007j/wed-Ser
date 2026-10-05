@@ -1,0 +1,29 @@
+# Rust / Cargo
+**/target/
+**/*.rs.bk
+*.pdb
+*.exe.stackdump
+
+# Servo build outputs (submodule has its own .gitignore, these catch stray artifacts)
+servo/target/
+servo/support/*.d
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local build configs and secrets — never commit
+.env
+*.local.toml
